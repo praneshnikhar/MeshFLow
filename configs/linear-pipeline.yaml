@@ -1,0 +1,17 @@
+name: linear-pipeline
+description: "Simple linear pipeline with no branching"
+tasks:
+  - id: step1
+    handler: http://localhost:9999/step1
+    retry:
+      max_attempts: 1
+
+  - id: step2
+    handler: http://localhost:9999/step2
+    depends_on:
+      - step1
+
+  - id: step3
+    handler: http://localhost:9999/step3
+    depends_on:
+      - step2

@@ -1,0 +1,29 @@
+name: sample-etl
+description: "Sample ETL pipeline for local testing"
+triggers:
+  - cron: "0 * * * *"
+tasks:
+  - id: extract
+    handler: http://localhost:9999/extract
+    retry:
+      max_attempts: 3
+      backoff: exponential
+      initial_wait: 1s
+
+  - id: transform
+    handler: http://localhost:9999/transform
+    depends_on:
+      - extract
+    retry:
+      max_attempts: 2
+      backoff: fixed
+      initial_wait: 2s
+
+  - id: load
+    handler: http://localhost:9999/load
+    depends_on:
+      - transform
+    retry:
+      max_attempts: 1
+      backoff: fixed
+      initial_wait: 1s
