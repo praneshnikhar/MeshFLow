@@ -1,0 +1,59 @@
+services:
+  node1:
+    build: .
+    hostname: node1
+    container_name: meshflow-node1
+    environment:
+      MESHFLOW_NAME: node1
+      MESHFLOW_BIND_ADDR: 0.0.0.0
+      MESHFLOW_GOSSIP_PORT: "7947"
+      MESHFLOW_PUBSUB_PORT: "4222"
+      MESHFLOW_DATA_DIR: /data
+      MESHFLOW_SEEDS: "node2:7947,node3:7947"
+    ports:
+      - "14222:4222"
+    volumes:
+      - node1-data:/data
+    networks:
+      - mesh
+
+  node2:
+    build: .
+    hostname: node2
+    container_name: meshflow-node2
+    environment:
+      MESHFLOW_NAME: node2
+      MESHFLOW_BIND_ADDR: 0.0.0.0
+      MESHFLOW_GOSSIP_PORT: "7947"
+      MESHFLOW_PUBSUB_PORT: "4222"
+      MESHFLOW_DATA_DIR: /data
+      MESHFLOW_SEEDS: "node1:7947,node3:7947"
+    volumes:
+      - node2-data:/data
+    networks:
+      - mesh
+
+  node3:
+    build: .
+    hostname: node3
+    container_name: meshflow-node3
+    environment:
+      MESHFLOW_NAME: node3
+      MESHFLOW_BIND_ADDR: 0.0.0.0
+      MESHFLOW_GOSSIP_PORT: "7947"
+      MESHFLOW_PUBSUB_PORT: "4222"
+      MESHFLOW_DATA_DIR: /data
+      MESHFLOW_SEEDS: "node1:7947,node2:7947"
+    volumes:
+      - node3-data:/data
+    networks:
+      - mesh
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+
+networks:
+  mesh:
+    driver: bridge
