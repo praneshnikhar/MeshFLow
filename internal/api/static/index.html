@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MeshFlow Dashboard</title>
+<style>
+:root {
+  --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
+  --text: #e1e4ea; --dim: #6b7280; --accent: #6366f1;
+  --green: #22c55e; --red: #ef4444; --yellow: #f59e0b;
+  --blue: #3b82f6; --radius: 8px; --gap: 12px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; font-size: 13px; }
+header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 20px; display: flex; align-items: center; height: 48px; flex-shrink: 0; }
+header h1 { font-size: 16px; font-weight: 600; color: var(--accent); margin-right: 24px; }
+nav { display: flex; gap: 4px; }
+nav button { background: none; border: none; color: var(--dim); padding: 8px 16px; cursor: pointer; border-radius: 4px; font-size: 13px; transition: all 0.15s; }
+nav button:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+nav button.active { color: var(--accent); background: rgba(99,102,241,0.1); }
+main { display: flex; flex: 1; overflow: hidden; }
+.content { flex: 1; overflow-y: auto; padding: 20px; }
+.sidebar { width: 320px; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+.sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--dim); }
+#events-feed { flex: 1; overflow-y: auto; padding: 8px; font-family: 'SF Mono', 'Menlo', monospace; font-size: 11px; }
+.event-line { padding: 4px 8px; border-radius: 3px; margin-bottom: 2px; display: flex; gap: 8px; align-items: flex-start; }
+.event-time { color: var(--dim); white-space: nowrap; flex-shrink: 0; }
+.event-type { color: var(--accent); white-space: nowrap; flex-shrink: 0; min-width: 100px; }
+.event-detail { color: var(--text); word-break: break-all; opacity: 0.8; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: var(--gap); }
+.card h3 { font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 8px 12px; color: var(--dim); font-weight: 500; font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+tr:hover td { background: rgba(255,255,255,0.02); }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+.badge-pending { background: rgba(107,114,128,0.2); color: var(--dim); }
+.badge-running { background: rgba(59,130,246,0.2); color: var(--blue); animation: pulse 2s infinite; }
+.badge-completed { background: rgba(34,197,94,0.2); color: var(--green); }
+.badge-failed { background: rgba(239,68,68,0.2); color: var(--red); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+button { background: var(--accent); color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: opacity 0.15s; }
+button:hover { opacity: 0.85; }
+button.sm { padding: 4px 10px; font-size: 11px; }
+button.danger { background: var(--red); }
+input, textarea, select { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 4px; font-size: 12px; width: 100%; margin-bottom: 8px; font-family: 'SF Mono', 'Menlo', monospace; }
+textarea { resize: vertical; min-height: 200px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--gap); }
+.stat { font-size: 28px; font-weight: 700; }
+.stat-label { color: var(--dim); font-size: 11px; text-transform: uppercase; }
+#dag-view { width: 100%; overflow: auto; }
+#mesh-graph { width: 100%; overflow: auto; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.status-pending { background: var(--dim); }
+.status-running { background: var(--blue); animation: pulse 1s infinite; }
+.status-completed { background: var(--green); }
+.status-failed { background: var(--red); }
+.flex-row { display: flex; gap: var(--gap); align-items: center; }
+.flex-grow { flex: 1; }
+.hidden { display: none; }
+.mb { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MeshFlow</h1>
+  <nav>
+    <button class="active" data-tab="overview">Overview</button>
+    <button data-tab="workflows">Workflows</button>
+    <button data-tab="dag">DAG Viewer</button>
+    <button data-tab="mesh">Mesh</button>
+  </nav>
+  <div class="flex-grow"></div>
+  <span id="connection-status" class="status-dot status-running"></span>
+</header>
+<main>
+  <div class="content" id="tab-content"></div>
+  <div class="sidebar">
+    <div class="sidebar-header">Live Events</div>
+    <div id="events-feed"></div>
+  </div>
+</main>
+
+<script>
+const API = '';
+let activeTab = 'overview';
+let eventsES = null;
+let meshMembers = [];
+let currentRunID = '';
+
+function fmtTime(ts) { const d = new Date(ts); return d.toLocaleTimeString(); }
+function fmtShort(ts) { if (!ts) return '-'; return new Date(ts).toLocaleString(); }
+
+async function api(path, opts) {
+  const res = await fetch(API + path, opts || {});
+  return res.json();
+}
+
+// --- Tabs ---
+document.querySelectorAll('nav button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    activeTab = b.dataset.tab;
+    renderTab();
+  });
+});
+
+async function renderTab() {
+  const el = document.getElementById('tab-content');
+  switch (activeTab) {
+    case 'overview': await renderOverview(el); break;
+    case 'workflows': await renderWorkflows(el); break;
+    case 'dag': await renderDAG(el); break;
+    case 'mesh': renderMesh(el); break;
+  }
+}
+
+// --- Overview ---
+async function renderOverview(el) {
+  const runs = await api('/runs');
+  const wfs = await api('/workflows');
+  const runList = runs.runs || [];
+  const running = runList.filter(r => r.status === 'running').length;
+  const completed = runList.filter(r => r.status === 'completed').length;
+  const failed = runList.filter(r => r.status === 'failed').length;
+  el.innerHTML = `
+    <div class="grid" style="margin-bottom:20px">
+      <div class="card"><div class="stat">${(wfs.workflows||[]).length}</div><div class="stat-label">Workflows</div></div>
+      <div class="card"><div class="stat">${runList.length}</div><div class="stat-label">Total Runs</div></div>
+      <div class="card"><div class="stat" style="color:var(--blue)">${running}</div><div class="stat-label">Running</div></div>
+      <div class="card"><div class="stat" style="color:var(--green)">${completed}</div><div class="stat-label">Completed</div></div>
+    </div>
+    <div class="card">
+      <h3>Recent Runs</h3>
+      <table>
+        <thead><tr><th>Run ID</th><th>Workflow</th><th>Status</th></tr></thead>
+        <tbody>${runList.slice(-10).reverse().map(r => `
+          <tr style="cursor:pointer" onclick="viewRun('${r.id}')">
+            <td style="font-family:monospace;font-size:11px">${r.id}</td>
+            <td>${r.workflow}</td>
+            <td><span class="badge badge-${r.status}">${r.status}</span></td>
+          </tr>
+        `).join('')}</tbody>
+      </table>
+      ${runList.length === 0 ? '<p style="color:var(--dim);padding:16px">No runs yet. Deploy and trigger a workflow to get started.</p>' : ''}
+    </div>`;
+}
+
+// --- Workflows ---
+async function renderWorkflows(el) {
+  const wfs = await api('/workflows');
+  el.innerHTML = `
+    <div class="flex-row" style="margin-bottom:16px">
+      <h2>Workflows</h2>
+      <button onclick="toggleDeploy()">+ Deploy</button>
+    </div>
+    <div id="deploy-form" class="card hidden">
+      <h3>Deploy Workflow</h3>
+      <form onsubmit="deployWorkflow(event)">
+        <textarea id="wf-yaml" placeholder="name: my-pipeline
+tasks:
+  - id: step1
+    handler: http://localhost:9999/step1">
+        </textarea>
+        <button type="submit">Deploy</button>
+        <button type="button" class="sm" style="background:var(--surface);border:1px solid var(--border);margin-left:8px" onclick="loadSample()">Load sample</button>
+        <button type="button" class="sm" style="background:var(--surface);border:1px solid var(--border);margin-left:8px" onclick="toggleDeploy()">Cancel</button>
+      </form>
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Name</th><th>Actions</th></tr></thead>
+        <tbody>${(wfs.workflows||[]).map(w => `
+          <tr>
+            <td><strong>${w}</strong></td>
+            <td>
+              <button class="sm" onclick="triggerWF('${w}')">Trigger</button>
+              <button class="sm" style="background:var(--surface);border:1px solid var(--border);margin-left:4px" onclick="viewRuns('${w}')">Runs</button>
+            </td>
+          </tr>
+        `).join('')}</tbody>
+      </table>
+      ${(wfs.workflows||[]).length === 0 ? '<p style="color:var(--dim);padding:16px">No workflows deployed.</p>' : ''}
+    </div>`;
+}
+
+let ViewRunsWf = '';
+async function viewRuns(name) {
+  ViewRunsWf = name;
+  const el = document.getElementById('tab-content');
+  const runs = await api('/runs?workflow=' + name);
+  el.innerHTML = `
+    <div class="flex-row mb"><button onclick="renderTab()">← Back</button><h2>Runs: ${name}</h2></div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Run ID</th><th>Status</th><th>Started</th><th>Actions</th></tr></thead>
+        <tbody>${(runs.runs||[]).reverse().map(r => `
+          <tr>
+            <td style="font-family:monospace;font-size:11px">${r.id}</td>
+            <td><span class="badge badge-${r.status}">${r.status}</span></td>
+            <td>${fmtShort(r.started_at)}</td>
+            <td><button class="sm" onclick="viewRun('${r.id}')">View</button></td>
+          </tr>
+        `).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+async function viewRun(id) {
+  currentRunID = id;
+  activeTab = 'dag';
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  document.querySelector('[data-tab="dag"]').classList.add('active');
+  await renderTab();
+}
+
+async function deployWorkflow(e) {
+  e.preventDefault();
+  const yaml = document.getElementById('wf-yaml').value;
+  const res = await fetch(API + '/deploy', { method: 'POST', body: yaml, headers: { 'Content-Type': 'application/octet-stream' } });
+  const data = await res.json();
+  if (res.ok) { document.getElementById('deploy-form').classList.add('hidden'); renderTab(); }
+  else alert('Error: ' + data.error);
+}
+
+async function triggerWF(name) {
+  await fetch(API + '/trigger/' + name, { method: 'POST' });
+  setTimeout(renderTab, 500);
+}
+
+function toggleDeploy() { document.getElementById('deploy-form').classList.toggle('hidden'); }
+function loadSample() {
+  document.getElementById('wf-yaml').value = `name: sample-pipeline
+description: "Sample ETL pipeline"
+tasks:
+  - id: extract
+    handler: http://localhost:9999/extract
+    retry:
+      max_attempts: 3
+      backoff: exponential
+      initial_wait: 1s
+  - id: transform
+    handler: http://localhost:9999/transform
+    depends_on:
+      - extract
+    retry:
+      max_attempts: 2
+  - id: load
+    handler: http://localhost:9999/load
+    depends_on:
+      - transform`;
+}
+
+// --- DAG Viewer ---
+async function renderDAG(el) {
+  if (!currentRunID) {
+    const runs = await api('/runs');
+    const list = (runs.runs||[]);
+    el.innerHTML = `<div class="card"><h3>Select a run to view</h3>
+      <table><thead><tr><th>Run ID</th><th>Workflow</th><th>Status</th></tr></thead>
+      <tbody>${list.reverse().map(r => `
+        <tr style="cursor:pointer" onclick="viewRun('${r.id}')">
+          <td style="font-family:monospace;font-size:11px">${r.id}</td><td>${r.workflow}</td>
+          <td><span class="badge badge-${r.status}">${r.status}</span></td>
+        </tr>`).join('')}</tbody></table>
+      <p style="color:var(--dim);margin-top:8px">Or trigger a workflow to create a new run.</p></div>`;
+    return;
+  }
+  const run = await api('/runs/' + currentRunID);
+  const tasks = run.tasks || {};
+  const taskList = Object.entries(tasks);
+  let depMap = {};
+  try {
+    const wf = await api('/workflows/' + run.workflow);
+    if (wf && wf.tasks) {
+      wf.tasks.forEach(t => {
+        if (!depMap[t.id]) depMap[t.id] = t;
+      });
+    }
+  } catch(_) {}
+
+  el.innerHTML = `
+    <div class="flex-row mb"><button onclick="currentRunID='';renderTab()">← Back</button>
+      <h2>${run.workflow} <span class="badge badge-${run.status}">${run.status}</span></h2>
+      <span style="color:var(--dim);font-size:11px">${run.id}</span>
+    </div>
+    <div id="dag-svg-container" style="overflow-x:auto"></div>
+    <div class="card" style="margin-top:16px">
+      <h3>Tasks</h3>
+      <table><thead><tr><th>Task</th><th>Status</th><th>Attempt</th><th>Output</th></tr></thead>
+        <tbody>${taskList.map(([id, t]) => {
+          const out = t.output ? t.output.substring(0, 80) : '-';
+          return `<tr><td>${id}</td><td><span class="badge badge-${t.status}">${t.status}</span></td>
+            <td>${t.attempt||1}</td><td style="font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(t.output||'')}">${out}</td></tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+
+  setTimeout(() => drawDAG(taskList, depMap), 50);
+}
+
+function drawDAG(taskList, depMap) {
+  const container = document.getElementById('dag-svg-container');
+  if (!container) return;
+  const n = taskList.length;
+  if (n === 0) { container.innerHTML = '<p style="color:var(--dim)">No tasks</p>'; return; }
+
+  const w = Math.max(600, n * 180);
+  const h = Math.max(400, n * 80);
+  const colors = { pending: 'var(--dim)', running: 'var(--blue)', completed: 'var(--green)', failed: 'var(--red)' };
+
+  const layers = {};
+  let maxLayer = 0;
+  function assignLayer(id, visited) {
+    if (layers[id] !== undefined) return layers[id];
+    if (visited.has(id)) return 0;
+    visited.add(id);
+    let l = 0;
+    const taskDef = depMap[id];
+    if (taskDef && taskDef.depends_on) {
+      taskDef.depends_on.forEach(d => { l = Math.max(l, assignLayer(d, visited) + 1); });
+    }
+    layers[id] = l;
+    maxLayer = Math.max(maxLayer, l);
+    return l;
+  }
+  taskList.forEach(([id]) => assignLayer(id, new Set()));
+
+  const layerNodes = {};
+  taskList.forEach(([id]) => {
+    if (!layerNodes[layers[id]]) layerNodes[layers[id]] = [];
+    layerNodes[layers[id]].push(id);
+  });
+
+  const marginX = 140, marginY = 80;
+  const colW = (w - 2 * marginX) / Math.max(1, maxLayer);
+  let svg = `<svg width="${w}" height="${h}" style="background:var(--bg);border-radius:8px">`;
+  svg += `<defs><marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="var(--dim)"/></marker></defs>`;
+
+  taskList.forEach(([id]) => {
+    const taskDef = depMap[id];
+    if (!taskDef || !taskDef.depends_on) return;
+    taskDef.depends_on.forEach(d => {
+      const x2 = marginX + layers[id] * colW;
+      const y2 = getY(id, layers, layerNodes, h, marginY);
+      const x1 = marginX + (layers[d] || 0) * colW;
+      const y1 = getY(d, layers, layerNodes, h, marginY);
+      svg += `<line x1="${x1+100}" y1="${y1+22}" x2="${x2}" y2="${y2+22}" stroke="var(--dim)" stroke-width="1.5" marker-end="url(#arrow)"/>`;
+    });
+  });
+
+  taskList.forEach(([id, t]) => {
+    const x = marginX + (layers[id] || 0) * colW;
+    const y = getY(id, layers, layerNodes, h, marginY);
+    const status = (t && t.status) || 'pending';
+    const c = colors[status] || colors.pending;
+    svg += `<rect x="${x}" y="${y}" width="100" height="44" rx="6" fill="var(--surface)" stroke="${c}" stroke-width="2"/>`;
+    svg += `<text x="${x+50}" y="${y+18}" text-anchor="middle" fill="var(--text)" font-size="12" font-weight="500">${id}</text>`;
+    svg += `<text x="${x+50}" y="${y+34}" text-anchor="middle" fill="${c}" font-size="10">${status}</text>`;
+  });
+
+  svg += '</svg>';
+  container.innerHTML = svg;
+}
+
+function getY(id, layers, layerNodes, h, marginY) {
+  const layer = layers[id] || 0;
+  const nodes = layerNodes[layer] || [id];
+  const idx = nodes.indexOf(id);
+  const spacing = (h - 2 * marginY) / Math.max(1, nodes.length);
+  return marginY + idx * spacing + spacing / 2 - 22;
+}
+
+function escHtml(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// --- Mesh ---
+function renderMesh(el) {
+  el.innerHTML = `<div class="card"><h3>Mesh Topology</h3><div id="mesh-graph"></div></div>
+    <div class="card"><h3>Members</h3><table id="mesh-table"><thead><tr><th>Node</th><th>Address</th></tr></thead><tbody></tbody></table></div>`;
+  drawMesh();
+}
+
+function drawMesh() {
+  const container = document.getElementById('mesh-graph');
+  if (!container) return;
+  const w = 500, h = 300;
+  const cx = w/2, cy = h/2, r = 80;
+
+  let svg = `<svg width="${w}" height="${h}">`;
+  if (meshMembers.length === 0) {
+    svg += `<circle cx="${cx}" cy="${cy}" r="30" fill="none" stroke="var(--accent)" stroke-width="2"/><text x="${cx}" y="${cy+4}" text-anchor="middle" fill="var(--accent)" font-size="12">1 node</text>`;
+  } else {
+    const angleStep = (2*Math.PI) / Math.max(1, meshMembers.length);
+    const positions = [];
+    meshMembers.forEach((_, i) => {
+      const a = i * angleStep - Math.PI/2;
+      positions.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+    });
+    // Draw connections
+    for (let i = 0; i < positions.length; i++) {
+      for (let j = i+1; j < positions.length; j++) {
+        svg += `<line x1="${positions[i].x}" y1="${positions[i].y}" x2="${positions[j].x}" y2="${positions[j].y}" stroke="var(--border)" stroke-width="1"/>`;
+      }
+    }
+    // Draw nodes
+    meshMembers.forEach((m, i) => {
+      const p = positions[i];
+      const name = m.split(' ')[0];
+      svg += `<circle cx="${p.x}" cy="${p.y}" r="24" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>`;
+      svg += `<text x="${p.x}" y="${p.y+4}" text-anchor="middle" fill="var(--text)" font-size="10">${name}</text>`;
+    });
+  }
+  svg += '</svg>';
+  container.innerHTML = svg;
+
+  const tbody = document.querySelector('#mesh-table tbody');
+  if (tbody) {
+    tbody.innerHTML = meshMembers.map(m => {
+      const parts = m.split(' (');
+      const name = parts[0];
+      const addr = parts.length > 1 ? parts[1].replace(')','') : '-';
+      return `<tr><td><span class="status-dot status-completed"></span>${name}</td><td>${addr}</td></tr>`;
+    }).join('');
+  }
+}
+
+// --- Events ---
+function connectEvents() {
+  if (eventsES) eventsES.close();
+  eventsES = new EventSource(API + '/events');
+  eventsES.onmessage = (e) => {
+    try {
+      const evt = JSON.parse(e.data);
+      addEventLine(evt);
+      if (evt.type === 'node.joined' || evt.type === 'node.left') refreshMesh();
+      if (evt.type && evt.type.includes('task') || evt.type.includes('workflow')) {
+        if ((activeTab === 'dag' || activeTab === 'overview')  && currentRunID && evt.payload && evt.payload.run_id === currentRunID) {
+          renderTab();
+        }
+      }
+    } catch(_) {}
+  };
+  eventsES.onerror = () => {
+    document.getElementById('connection-status').className = 'status-dot status-failed';
+    setTimeout(connectEvents, 2000);
+  };
+  eventsES.onopen = () => {
+    document.getElementById('connection-status').className = 'status-dot status-running';
+  };
+}
+
+const eventLines = [];
+const MAX_EVENT_LINES = 200;
+
+function addEventLine(evt) {
+  eventLines.push(evt);
+  if (eventLines.length > MAX_EVENT_LINES) eventLines.shift();
+  const feed = document.getElementById('events-feed');
+  if (!feed) return;
+  const time = evt.timestamp ? new Date(evt.timestamp).toLocaleTimeString() : '';
+  const detail = evt.payload ? Object.entries(evt.payload).filter(([k]) => k !== 'output' && k !== 'timestamp').map(([k,v]) => `${k}=${v}`).join(' ') : '';
+  const line = document.createElement('div');
+  line.className = 'event-line';
+  line.innerHTML = `<span class="event-time">${time}</span><span class="event-type">${evt.type}</span><span class="event-detail">${detail}</span>`;
+  feed.appendChild(line);
+  feed.scrollTop = feed.scrollHeight;
+}
+
+async function refreshMesh() {
+  const data = await api('/mesh');
+  meshMembers = data.members || [];
+  if (activeTab === 'mesh') drawMesh();
+}
+
+// Init
+connectEvents();
+renderTab();
+refreshMesh();
+setInterval(refreshMesh, 10000);
+setInterval(() => { if (activeTab === 'dag' || activeTab === 'overview') renderTab(); }, 5000);
+</script>
+</body>
+</html>
