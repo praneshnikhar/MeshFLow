@@ -15,6 +15,7 @@ Every major workflow orchestrator (Airflow, Temporal, Dagster, Prefect) has a ce
 MeshFlow eliminates the scheduler entirely. The mesh IS the scheduler. Nodes gossip to discover peers, events flow through the pub/sub mesh, and tasks are claimed on a first-come basis. No central database. No queue to configure. No SPOF.
 
 ---
+<img width="573" height="257" alt="Image" src="https://github.com/user-attachments/assets/03d5ef91-e7ce-431b-8c9d-7306aa8e2d82" />
 
 ## Architecture
 
