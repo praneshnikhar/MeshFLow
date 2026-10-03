@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/pranesh/meshflow/internal/pubsub"
 	"github.com/pranesh/meshflow/internal/store"
 	"github.com/pranesh/meshflow/pkg/events"
+	"github.com/pranesh/meshflow/pkg/workflow"
 )
 
 type 	Node struct {
@@ -117,6 +120,8 @@ func (n *Node) Start() error {
 
 	go n.heartbeatLoop()
 	go n.gossipRelay()
+	go n.cronLoop()
+	go n.topicSyncLoop()
 
 	slog.Info("meshflow node ready",
 		"name", n.cfg.NodeName,
@@ -275,12 +280,170 @@ func (n *Node) handleNodeLeft(evt events.Event) {
 	}
 }
 
+func (n *Node) cronLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-n.stopCh:
+			return
+		case <-ticker.C:
+			if n.engine == nil {
+				continue
+			}
+			now := time.Now()
+			for _, name := range n.engine.GetWorkflows() {
+				w := n.engine.GetWorkflow(name)
+				if w == nil {
+					continue
+				}
+				for _, trigger := range w.Triggers {
+					if trigger.Cron != "" && cronMatches(trigger.Cron, now) {
+						slog.Info("cron trigger fired", "workflow", w.Name, "cron", trigger.Cron)
+						n.engine.Trigger(w.Name)
+					}
+				}
+			}
+		}
+	}
+}
+
+func cronMatches(expr string, t time.Time) bool {
+	parts := strings.Fields(expr)
+	if len(parts) != 5 {
+		return false
+	}
+	return matchCronField(parts[0], t.Minute()) &&
+		matchCronField(parts[1], t.Hour()) &&
+		matchCronField(parts[2], t.Day()) &&
+		matchCronField(parts[3], int(t.Month())) &&
+		matchCronField(parts[4], int(t.Weekday()))
+}
+
+func matchCronField(field string, value int) bool {
+	if field == "*" {
+		return true
+	}
+	for _, part := range strings.Split(field, ",") {
+		if strings.Contains(part, "/") {
+			split := strings.SplitN(part, "/", 2)
+			step, err := strconv.Atoi(split[1])
+			if err != nil {
+				continue
+			}
+			start := 0
+			if split[0] != "*" {
+				start, _ = strconv.Atoi(split[0])
+			}
+			if value >= start && (value-start)%step == 0 {
+				return true
+			}
+		} else if strings.Contains(part, "-") {
+			split := strings.SplitN(part, "-", 2)
+			start, err1 := strconv.Atoi(split[0])
+			end, err2 := strconv.Atoi(split[1])
+			if err1 == nil && err2 == nil && value >= start && value <= end {
+				return true
+			}
+		} else {
+			v, err := strconv.Atoi(part)
+			if err == nil && v == value {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (n *Node) topicSyncLoop() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-n.stopCh:
+			return
+		case <-ticker.C:
+			topics := n.gatherTopics()
+			if len(topics) > 0 {
+				n.mesh.SetMeta("topics", strings.Join(topics, ","))
+			}
+		}
+	}
+}
+
+func (n *Node) gatherTopics() []string {
+	seen := make(map[string]bool)
+	for _, name := range n.engine.GetWorkflows() {
+		w := n.engine.GetWorkflow(name)
+		if w == nil {
+			continue
+		}
+		for _, t := range w.Tasks {
+			for k := range t.Input {
+				seen[k] = true
+			}
+		}
+	}
+	topics := make([]string, 0, len(seen))
+	for k := range seen {
+		topics = append(topics, k)
+	}
+	return topics
+}
+
 func (n *Node) DeployWorkflow(data []byte) error {
 	w, err := dag.Parse(data)
 	if err != nil {
 		return fmt.Errorf("parse workflow: %w", err)
 	}
 	return n.engine.Deploy(w)
+}
+
+func (n *Node) InstantiateTemplate(data []byte, params map[string]string) error {
+	w, err := dag.Parse(data)
+	if err != nil {
+		return fmt.Errorf("parse workflow: %w", err)
+	}
+	if !w.Template {
+		return fmt.Errorf("workflow %s is not a template", w.Name)
+	}
+
+	rendered := renderTemplate(w, params)
+	return n.engine.Deploy(rendered)
+}
+
+func renderTemplate(w *workflow.Workflow, params map[string]string) *workflow.Workflow {
+	instance := *w
+	instance.Template = false
+	instance.Name = replaceParams(w.Name, params)
+	instance.Description = replaceParams(w.Description, params)
+
+	tasks := make([]workflow.Task, len(w.Tasks))
+	for i, t := range w.Tasks {
+		tasks[i] = t
+		tasks[i].ID = replaceParams(t.ID, params)
+		tasks[i].Handler = replaceParams(t.Handler, params)
+		newDeps := make([]string, len(t.DependsOn))
+		for j, d := range t.DependsOn {
+			newDeps[j] = replaceParams(d, params)
+		}
+		tasks[i].DependsOn = newDeps
+		if tasks[i].Condition != "" {
+			tasks[i].Condition = replaceParams(t.Condition, params)
+		}
+	}
+	instance.Tasks = tasks
+	return &instance
+}
+
+func replaceParams(s string, params map[string]string) string {
+	result := s
+	for k, v := range params {
+		result = strings.ReplaceAll(result, "{{"+k+"}}", v)
+	}
+	return result
 }
 
 func (n *Node) TriggerWorkflow(name string) error {

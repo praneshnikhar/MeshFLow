@@ -1,0 +1,21 @@
+\section{Introduction}
+
+Workflow orchestration is the backbone of modern data infrastructure. Systems like Apache Airflow, Temporal, Prefect, and Dagster coordinate millions of interdependent tasks across distributed compute clusters daily. However, their architecture shares a common vulnerability: a centralized scheduler that serializes all task assignment decisions.
+
+This centralization creates a single point of failure (SPOF). If the scheduler crashes, no new tasks are assigned until failover completes---a process that typically takes 30--120 seconds in production deployments. At large scale, the scheduler also becomes a throughput bottleneck, as every task transition must pass through a single decision point.
+
+Distributed consensus protocols (Raft, Paxos) can make scheduling fault-tolerant, but at the cost of leader election latency (typically 150--300 ms) and operational complexity. Systems like Temporal and Cadence use pluggable persistence layers but retain centralized matching services.
+
+We take a different approach: eliminate the scheduler entirely. In MeshFlow, every node is fully capable of receiving workflow triggers, resolving DAG dependencies, claiming tasks, and executing them. Nodes discover each other via SWIM gossip and coordinate through embedded NATS JetStream pub/sub. Task assignment uses a \textit{first-claim-wins} mechanism: the first node to publish a claim event to the shared event mesh wins the task. No leader election, no consensus, no central coordination.
+
+The core insight is that for many workflow workloads---particularly batch ETL pipelines, CI/CD jobs, and event-driven microservices---the overhead of consensus protocols exceeds the cost of resolving occasional claim conflicts. By accepting a small probability of duplicate claims (mitigated through a lightweight arbitration window), we eliminate the scheduling bottleneck entirely.
+
+This paper makes the following contributions:
+
+\begin{itemize}
+\item A schedulerless architecture for workflow orchestration where every node participates equally in scheduling, with no leader election or consensus protocol.
+\item The first-claim-wins mechanism: a gossip-based task assignment protocol that achieves O(1) claim latency with deterministic arbitration for conflict resolution.
+\item A gossip-to-pub/sub event relay bridge that bridges the UDP gossip domain to the TCP pub/sub domain with message deduplication.
+\item An open-source implementation in Go, shipping as a single 26 MB binary (2,873 lines of core logic) with SWIM gossip, NATS JetStream, BoltDB persistence, and a real-time web dashboard embedded in each node.
+\item Micro-benchmark evaluation demonstrating 6.3 ms trigger latency, 30--52K events/sec throughput, and sub-2-second failure detection and recovery.
+\end{itemize}

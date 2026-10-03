@@ -1,0 +1,32 @@
+\section{Implementation}
+
+MeshFlow is implemented in Go (2,873 lines of core logic) and ships as a single statically linked binary. Table~\ref{tab:code-size} breaks down the implementation by component.
+
+\begin{table}[h]
+\centering
+\caption{Lines of code by component.}
+\label{tab:code-size}
+\begin{tabular}{lr}
+\toprule
+\textbf{Component} & \textbf{LOC} \\
+\midrule
+DAG Engine (orchestration, claiming, retry) & 537 \\
+Web Dashboard (HTML/CSS/JS SPA) & 485 \\
+CLI Entrypoint & 339 \\
+Node Composer (relay, heartbeat, lifecycle) & 331 \\
+HTTP API Server + SSE & 213 \\
+SWIM Gossip Wrapper & 189 \\
+BoltDB Persistence & 174 \\
+HTTP Executor + Retry/Backoff & 167 \\
+Embedded NATS + JetStream & 157 \\
+Workflow/Task/Run Types & 142 \\
+DAG Parser + Cycle Detection & 131 \\
+Configuration & 123 \\
+Event Types & 61 \\
+\midrule
+\textbf{Total Core Logic} & \textbf{2,873} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The binary is built with \texttt{CGO\_ENABLED=0}, producing a fully static 26 MB artifact (20 MB in a multi-stage Docker Alpine image) with zero runtime dependencies. No external database, message queue, or coordination service is required. The web dashboard---a 485-line single-page application with SVG DAG rendering, mesh topology visualization, and live SSE event streaming---is embedded via Go's \texttt{//go:embed} directive and served directly from the binary.

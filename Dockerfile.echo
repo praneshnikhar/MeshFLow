@@ -1,0 +1,11 @@
+FROM golang:1.23-alpine AS builder
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/echohandler/ ./cmd/echohandler/
+RUN CGO_ENABLED=0 go build -o /echohandler ./cmd/echohandler/
+
+FROM alpine:3.20
+COPY --from=builder /echohandler /usr/local/bin/echohandler
+EXPOSE 9999
+ENTRYPOINT ["echohandler"]

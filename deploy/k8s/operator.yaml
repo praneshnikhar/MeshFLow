@@ -1,0 +1,123 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: meshflows.meshflow.io
+spec:
+  group: meshflow.io
+  names:
+    kind: MeshFlow
+    listKind: MeshFlowList
+    plural: meshflows
+    singular: meshflow
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                replicas:
+                  type: integer
+                  default: 3
+                image:
+                  type: string
+                  default: "praneshnikhar/meshflow:latest"
+                seeds:
+                  type: array
+                  items:
+                    type: string
+                workflows:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      definition:
+                        type: string
+              required: ["replicas"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: meshflow
+  labels:
+    app: meshflow
+spec:
+  clusterIP: None
+  selector:
+    app: meshflow
+  ports:
+    - name: gossip
+      port: 7947
+    - name: api
+      port: 8080
+    - name: pubsub
+      port: 4222
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: meshflow
+  labels:
+    app: meshflow
+spec:
+  serviceName: meshflow
+  replicas: 3
+  selector:
+    matchLabels:
+      app: meshflow
+  template:
+    metadata:
+      labels:
+        app: meshflow
+    spec:
+      containers:
+        - name: meshflow
+          image: praneshnikhar/meshflow:latest
+          ports:
+            - containerPort: 7946
+              name: bind
+            - containerPort: 7947
+              name: gossip
+            - containerPort: 8080
+              name: api
+            - containerPort: 4222
+              name: pubsub
+          env:
+            - name: MESHFLOW_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MESHFLOW_SEEDS
+              value: "meshflow-0:7947,meshflow-1:7947"
+            - name: MESHFLOW_API_PORT
+              value: "8080"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

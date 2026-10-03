@@ -1,0 +1,21 @@
+\section{Related Work}
+
+\subsection{Workflow Orchestration Systems}
+
+Apache Airflow popularized DAG-based workflow orchestration with its Python-defined pipelines, but relies on a centralized scheduler backed by a relational database. Temporal improves upon Airflow with durable execution and pluggable persistence, but retains a centralized matching service for task-to-worker assignment. Prefect and Dagster offer modern Python-native APIs but share the same centralized architecture. MeshFlow differs fundamentally by eliminating the central scheduler; every node is a peer.
+
+\subsection{Distributed Consensus in Scheduling}
+
+Systems like Apache Helix and Apache Curator use ZooKeeper-based leader election for fault-tolerant scheduling. Kubernetes' scheduler uses a combination of optimistic concurrency and watch-based reconciliation rather than leader election, but still operates as a centralized control loop. Ray's distributed scheduler uses a bottom-up approach where local schedulers on each node make task placement decisions, but global state is maintained by the Global Control Store (GCS), which is a separate service with its own fault-tolerance mechanism.
+
+\subsection{Gossip-based Coordination}
+
+SWIM and its variants (Lifeguard, Health-Aware SWIM) provide scalable membership with low probe overhead. Serf (by HashiCorp) packages SWIM gossip with custom event handling for decentralized orchestration. Consul uses SWIM for service discovery but couples it with Raft for strongly consistent state. MeshFlow uses SWIM only for membership and failure detection, delegating state sharing to the event relay bridge.
+
+\subsection{Event-Driven Architectures}
+
+The event sourcing pattern---where state is derived from an append-only event log---has been widely adopted in systems like Apache Kafka, NATS JetStream, and EventStoreDB. MeshFlow applies event sourcing to workflow state: each node independently reconstructs DAG state from the event stream. The gossip-to-NATS relay provides a novel bridge between the two communication domains, enabling decentralized event replication without NATS clustering or external coordination.
+
+\subsection{Choreography vs. Orchestration}
+
+The microservices community distinguishes between orchestration (a central conductor coordinates services) and choreography (services coordinate through events). MeshFlow occupies an unusual middle ground: it is event-driven (choreography-like) but provides explicit DAG definitions (orchestration-like). Tasks are defined as explicit dependency graphs, but their execution is coordinated purely through events on the mesh.

@@ -1,0 +1,27 @@
+\section{Background and Motivation}
+
+\subsection{Centralized Orchestration: The SPOF Problem}
+
+In a centralized workflow system, all triggers arrive at the scheduler, which maintains the global state, resolves DAG dependencies, and dispatches tasks to workers. If the scheduler fails, the system stalls. Even with high-availability failover, the failover window introduces latency that compounds across dependent tasks. In MeshFlow, any node can accept a workflow trigger. The DAG state is shared through the event mesh: each node independently computes which tasks are ready and competes to claim them. There is no central authority to fail.
+
+\subsection{Why Not Consensus?}
+
+Distributed consensus protocols (Raft, Paxos, EPaxos) solve the SPOF problem by replicating the scheduler state across multiple nodes. However, they introduce their own costs:
+
+\begin{itemize}
+\item Leader election latency: Raft leader elections typically take 150--300 ms. While the system is leaderless, no new tasks can be scheduled.
+\item Write amplification: Every state transition requires a quorum write, adding 1--2 network round trips per decision.
+\item Operational complexity: Consensus protocols require careful tuning of heartbeat intervals, election timeouts, and log compaction.
+\end{itemize}
+
+For workflow orchestration---where tasks typically run for seconds to minutes---the sub-second overhead of consensus is often acceptable. But the architectural cost is more significant: consensus-based schedulers are complex to deploy, monitor, and debug. MeshFlow's schedulerless design eliminates this complexity entirely.
+
+\subsection{Related Concepts}
+
+The key design patterns MeshFlow draws from are:
+
+\textbf{SWIM Gossip.} The SWIM (Scalable Weakly-consistent Infection-style process group Membership) protocol provides failure detection with $O(1)$ per-node probe load. HashiCorp's memberlist library provides a battle-tested implementation used in Consul and Nomad at scale.
+
+\textbf{Event-driven architectures.} Rather than maintaining a global state machine, MeshFlow uses events as the shared truth. Each node independently computes the next state from the event log, following the event sourcing pattern popularized by systems like Kafka and NATS.
+
+\textbf{Embedded everything.} MeshFlow bundles a NATS message broker, BoltDB database, HTTP server, and web dashboard into a single binary. This follows the "single binary" philosophy of projects like CockroachDB and Caddy, minimizing operational overhead.

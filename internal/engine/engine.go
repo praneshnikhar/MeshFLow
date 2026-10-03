@@ -14,30 +14,44 @@ import (
 	"github.com/pranesh/meshflow/internal/store"
 	"github.com/pranesh/meshflow/pkg/events"
 	"github.com/pranesh/meshflow/pkg/workflow"
+	"github.com/pranesh/meshflow/internal/api"
 )
 
 type Engine struct {
-	name     string
-	broker   *pubsub.Broker
-	executor *executor.HTTPExecutor
-	store    *store.Store
-	mu       sync.RWMutex
-	workflows map[string]*workflow.Workflow
-	runs     map[string]*workflow.WorkflowRun
-	claimed  map[string]bool
-	stopCh   chan struct{}
+	name            string
+	broker          *pubsub.Broker
+	httpExecutor    executor.Executor
+	shellExecutor   executor.Executor
+	wasmExecutor    executor.Executor
+	grpcExecutor    executor.Executor
+	store           *store.Store
+	mu              sync.RWMutex
+	workflows       map[string]*workflow.Workflow
+	runs            map[string]*workflow.WorkflowRun
+	claimed         map[string]bool
+	claimedByNode   map[string]string
+	taskOutputs     map[string]map[string]string
+	claimArbWindow  time.Duration
+	stopCh          chan struct{}
 }
 
 func New(name string, broker *pubsub.Broker, st *store.Store) *Engine {
+	httpExec := executor.NewHTTPExecutor()
 	return &Engine{
-		name:      name,
-		broker:    broker,
-		executor:  executor.NewHTTPExecutor(),
-		store:     st,
-		workflows: make(map[string]*workflow.Workflow),
-		runs:      make(map[string]*workflow.WorkflowRun),
-		claimed:   make(map[string]bool),
-		stopCh:    make(chan struct{}),
+		name:           name,
+		broker:         broker,
+		httpExecutor:   executor.NewCircuitBreakerExecutor(httpExec),
+		shellExecutor:  executor.NewShellExecutor(),
+		wasmExecutor:   executor.NewWasmExecutor(),
+		grpcExecutor:   executor.NewGRPCExecutor(),
+		store:          st,
+		workflows:      make(map[string]*workflow.Workflow),
+		runs:           make(map[string]*workflow.WorkflowRun),
+		claimed:        make(map[string]bool),
+		claimedByNode:  make(map[string]string),
+		taskOutputs:    make(map[string]map[string]string),
+		claimArbWindow: 15 * time.Millisecond,
+		stopCh:         make(chan struct{}),
 	}
 }
 
@@ -204,6 +218,7 @@ func (e *Engine) handleWorkflowTriggered(evt events.Event) {
 		e.runs[runID] = run
 		e.mu.Unlock()
 		e.saveRun(run)
+		api.IncWorkflowsRun()
 	}
 
 	e.tryClaimAndRun(w, runID)
@@ -216,6 +231,7 @@ func (e *Engine) handleTaskClaimed(evt events.Event) {
 
 	e.mu.Lock()
 	key := runID + ":" + taskID
+	e.claimedByNode[key] = claimedBy
 	if claimedBy != e.name {
 		e.claimed[key] = true
 	}
@@ -235,6 +251,11 @@ func (e *Engine) handleTaskCompleted(evt events.Event) {
 		output, _ := evt.Payload["output"].(string)
 		tr.Output = output
 		run.Tasks[taskID] = tr
+
+		if e.taskOutputs[runID] == nil {
+			e.taskOutputs[runID] = make(map[string]string)
+		}
+		e.taskOutputs[runID][taskID] = output
 	}
 	e.mu.Unlock()
 
@@ -323,16 +344,113 @@ func (e *Engine) handleTaskFailed(evt events.Event) {
 	e.tryClaimAndRun(w, runID)
 }
 
+func (e *Engine) getExecutor(task workflow.Task) executor.Executor {
+	switch task.HandlerType {
+	case "shell":
+		return e.shellExecutor
+	case "wasm":
+		return e.wasmExecutor
+	case "grpc":
+		return e.grpcExecutor
+	default:
+		return e.httpExecutor
+	}
+}
+
+func (e *Engine) evaluateCondition(task workflow.Task, runID string) bool {
+	if task.Condition == "" {
+		return true
+	}
+	e.mu.RLock()
+	outputs := e.taskOutputs[runID]
+	e.mu.RUnlock()
+
+	parts := splitCondition(task.Condition)
+	if len(parts) == 3 {
+		key := parts[0]
+		op := parts[1]
+		expected := parts[2]
+		val, ok := outputs[key]
+		if !ok {
+			return false
+		}
+		switch op {
+		case "==":
+			return val == expected
+		case "!=":
+			return val != expected
+		case "contains":
+			return containsSubstr(val, expected)
+		}
+	}
+	return true
+}
+
+func splitCondition(cond string) []string {
+	var parts []string
+	current := ""
+	inQuote := false
+	for _, ch := range cond {
+		switch {
+		case ch == '"':
+			inQuote = !inQuote
+		case ch == ' ' && !inQuote:
+			if current != "" {
+				parts = append(parts, current)
+				current = ""
+			}
+		default:
+			current += string(ch)
+		}
+	}
+	if current != "" {
+		parts = append(parts, current)
+	}
+	return parts
+}
+
+func containsSubstr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Engine) tryClaimAndRun(w *workflow.Workflow, runID string) {
 	completed := e.getCompletedTasks(runID)
 	ready := dag.ReadyTasks(w, completed)
 
 	for _, task := range ready {
+		if !e.evaluateCondition(task, runID) {
+			e.mu.Lock()
+			now := time.Now().UTC()
+			if e.runs[runID] != nil {
+				e.runs[runID].Tasks[task.ID] = workflow.TaskRun{
+					TaskID:    task.ID,
+					Status:    workflow.TaskSkipped,
+					Output:    "condition not met: " + task.Condition,
+					StartedAt: &now,
+					EndedAt:   &now,
+				}
+				e.saveRun(e.runs[runID])
+			}
+			e.mu.Unlock()
+			e.publish(events.NewEvent(events.EventTaskCompleted, e.name, map[string]interface{}{
+				"run_id":   runID,
+				"workflow": w.Name,
+				"task_id":  task.ID,
+				"output":   "condition not met: " + task.Condition,
+			}))
+			continue
+		}
 		key := runID + ":" + task.ID
 		e.mu.Lock()
 		alreadyClaimed := e.claimed[key]
 		if !alreadyClaimed {
 			e.claimed[key] = true
+			e.claimedByNode[key] = e.name
 		}
 		e.mu.Unlock()
 
@@ -340,12 +458,27 @@ func (e *Engine) tryClaimAndRun(w *workflow.Workflow, runID string) {
 			continue
 		}
 
-		e.publish(events.NewEvent(events.EventTaskClaimed, e.name, map[string]interface{}{
+		claimMsgID := fmt.Sprintf("claim.%s.%s", runID, task.ID)
+		e.publishDeduped(events.NewEvent(events.EventTaskClaimed, e.name, map[string]interface{}{
 			"run_id":     runID,
 			"workflow":   w.Name,
 			"task_id":    task.ID,
 			"claimed_by": e.name,
-		}))
+		}), claimMsgID)
+
+		time.Sleep(e.claimArbWindow)
+
+		e.mu.RLock()
+		winner := e.claimedByNode[key]
+		e.mu.RUnlock()
+
+		if winner != e.name {
+			slog.Debug("claim arbitration lost", "task", key, "winner", winner, "self", e.name)
+			e.mu.Lock()
+			delete(e.claimed, key)
+			e.mu.Unlock()
+			continue
+		}
 
 		go e.executeTask(w, task, runID)
 	}
@@ -367,6 +500,15 @@ func (e *Engine) executeTask(w *workflow.Workflow, task workflow.Task, runID str
 	}
 	e.runs[runID].Status = workflow.StatusRunning
 	tr := e.runs[runID].Tasks[task.ID]
+
+	upstreamInputs := make(map[string]interface{})
+	for _, dep := range task.DependsOn {
+		if outs, ok := e.taskOutputs[runID]; ok {
+			if out, ok2 := outs[dep]; ok2 {
+				upstreamInputs[dep] = out
+			}
+		}
+	}
 	e.saveRun(e.runs[runID])
 	e.mu.Unlock()
 
@@ -377,9 +519,11 @@ func (e *Engine) executeTask(w *workflow.Workflow, task workflow.Task, runID str
 	}))
 
 	ctx := context.Background()
-	result, err := e.executor.ExecuteWithRetry(ctx, task, &executor.ExecuteRequest{
+	exec := e.getExecutor(task)
+	result, err := exec.ExecuteWithRetry(ctx, task, &executor.ExecuteRequest{
 		WorkflowID: runID,
 		TaskID:     task.ID,
+		Input:      upstreamInputs,
 	})
 
 	now = time.Now().UTC()
@@ -398,6 +542,7 @@ func (e *Engine) executeTask(w *workflow.Workflow, task workflow.Task, runID str
 		}
 		tr.Status = workflow.TaskFailed
 		tr.Error = errMsg
+		api.IncTasksFailed()
 
 		e.mu.Lock()
 		e.runs[runID].Tasks[task.ID] = tr
@@ -419,6 +564,7 @@ func (e *Engine) executeTask(w *workflow.Workflow, task workflow.Task, runID str
 	tr.Status = workflow.TaskCompleted
 	tr.Output = result.Output
 	tr.Attempt = result.Attempt
+	api.IncTasksCompleted()
 	e.mu.Lock()
 	e.runs[runID].Tasks[task.ID] = tr
 	e.saveRun(e.runs[runID])
@@ -436,6 +582,13 @@ func (e *Engine) executeTask(w *workflow.Workflow, task workflow.Task, runID str
 
 func (e *Engine) publish(evt events.Event) {
 	e.broker.Publish(evt)
+	if e.store != nil {
+		e.store.AppendEvent(evt)
+	}
+}
+
+func (e *Engine) publishDeduped(evt events.Event, msgID string) {
+	e.broker.PublishWithID(evt, msgID)
 	if e.store != nil {
 		e.store.AppendEvent(evt)
 	}

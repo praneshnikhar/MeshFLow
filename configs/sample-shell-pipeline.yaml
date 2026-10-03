@@ -1,0 +1,22 @@
+name: data-pipeline
+description: "ETL pipeline with shell tasks and output passing"
+triggers:
+  - cron: "0 * * * *"
+tasks:
+  - id: fetch
+    handler: "curl -s https://api.example.com/data | jq '.items' > /tmp/data.json && echo 'fetched'"
+    handler_type: shell
+    retry:
+      max_attempts: 2
+      backoff: fixed
+      initial_wait: 5s
+      max_wait: 30s
+  - id: transform
+    handler: "jq '.[] | {name: .title, value: .price}' /tmp/data.json"
+    handler_type: shell
+    depends_on:
+      - fetch
+  - id: load
+    handler: http://storage:8080/ingest
+    depends_on:
+      - transform

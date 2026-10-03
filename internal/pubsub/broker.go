@@ -82,6 +82,24 @@ func (b *Broker) Publish(evt events.Event) error {
 	return nil
 }
 
+func (b *Broker) PublishWithID(evt events.Event, msgID string) error {
+	data, err := evt.Encode()
+	if err != nil {
+		return fmt.Errorf("encode event: %w", err)
+	}
+	subject := fmt.Sprintf("meshflow.%s", evt.Type)
+	_, err = b.js.PublishMsg(&nats.Msg{
+		Subject: subject,
+		Data:    data,
+		Header:  nats.Header{"Nats-Msg-Id": []string{msgID}},
+	})
+	if err != nil {
+		return fmt.Errorf("publish event with id: %w", err)
+	}
+	slog.Debug("event published with dedup", "type", evt.Type, "msg_id", msgID)
+	return nil
+}
+
 func (b *Broker) Subscribe(eventType events.EventType, handler func(events.Event)) error {
 	subject := fmt.Sprintf("meshflow.%s", eventType)
 
@@ -103,7 +121,7 @@ func (b *Broker) Subscribe(eventType events.EventType, handler func(events.Event
 			return
 		}
 		handler(evt)
-	}, nats.Durable(fmt.Sprintf("%s-%s", b.name, sanitizeStreamName(string(eventType)))))
+	}, nats.Durable(fmt.Sprintf("%s-%s", sanitizeStreamName(b.name), sanitizeStreamName(string(eventType)))))
 	if err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}

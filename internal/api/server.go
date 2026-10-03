@@ -46,6 +46,30 @@ func (s *Server) Start() error {
 		fmt.Fprint(w, "ok")
 	})
 
+	mux.HandleFunc("/metrics", prometheusHandler)
+
+	mux.HandleFunc("/webhook/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, "/webhook/")
+		if name == "" {
+			http.Error(w, "workflow name required", http.StatusBadRequest)
+			return
+		}
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		payload := string(body)
+		if len(payload) > 0 {
+			slog.Info("webhook received", "workflow", name, "size", len(payload))
+		}
+		if err := s.node.TriggerWorkflow(name); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error(), "status": "not_triggered"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "triggered", "workflow": name})
+	})
+
 	staticFS, _ := fs.Sub(staticFiles, "static")
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,10 @@ func (d *Delegate) NodeMeta(limit int) []byte {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return []byte(fmt.Sprintf("%v", d.meta))
+}
+
+func (d *Delegate) nodeMeta(node *memberlist.Node) []byte {
+	return node.Meta
 }
 
 func (d *Delegate) NotifyMsg(msg []byte) {
@@ -152,9 +157,20 @@ func (m *Mesh) Join(seeds []string) (int, error) {
 }
 
 func (m *Mesh) BroadcastEvent(data []byte) {
+	m.BroadcastEventToTopics(data, nil)
+}
+
+func (m *Mesh) BroadcastEventToTopics(data []byte, topics []string) {
 	for _, node := range m.list.Members() {
 		if node.Name == m.list.LocalNode().Name {
 			continue
+		}
+		if len(topics) > 0 {
+			metaBytes := m.delegate.nodeMeta(node)
+			nodeTopics := parseNodeTopics(metaBytes)
+			if !hasAnyTopic(nodeTopics, topics) {
+				continue
+			}
 		}
 		m.list.SendReliable(node, data)
 	}
@@ -186,4 +202,29 @@ func (m *Mesh) SetMeta(key, value string) {
 
 func (m *Mesh) Shutdown() error {
 	return m.list.Shutdown()
+}
+
+func parseNodeTopics(meta []byte) []string {
+	metaStr := string(meta)
+	start := strings.Index(metaStr, "topics:[")
+	if start < 0 {
+		return nil
+	}
+	start += len("topics:[")
+	end := strings.Index(metaStr[start:], "]")
+	if end < 0 {
+		return nil
+	}
+	return strings.Split(metaStr[start:start+end], " ")
+}
+
+func hasAnyTopic(nodeTopics, eventTopics []string) bool {
+	for _, et := range eventTopics {
+		for _, nt := range nodeTopics {
+			if et == nt {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -40,6 +40,7 @@ type Task struct {
 	Retry       *RetryPolicy           `yaml:"retry" json:"retry"`
 	Timeout     string                 `yaml:"timeout" json:"timeout"`
 	Input       map[string]interface{} `yaml:"input" json:"input"`
+	Condition   string                 `yaml:"condition" json:"condition"`
 }
 
 func (t *Task) Default() {
@@ -56,10 +57,12 @@ func (t *Task) Default() {
 }
 
 type Workflow struct {
-	Name        string    `yaml:"name" json:"name"`
-	Description string    `yaml:"description" json:"description"`
-	Triggers    []Trigger `yaml:"triggers" json:"triggers"`
-	Tasks       []Task    `yaml:"tasks" json:"tasks"`
+	Name        string            `yaml:"name" json:"name"`
+	Description string            `yaml:"description" json:"description"`
+	Template    bool              `yaml:"template" json:"template"`
+	Params      map[string]string `yaml:"params" json:"params"`
+	Triggers    []Trigger         `yaml:"triggers" json:"triggers"`
+	Tasks       []Task            `yaml:"tasks" json:"tasks"`
 }
 
 func (w *Workflow) Validate() error {
@@ -118,6 +121,7 @@ const (
 	TaskRunning   TaskStatus = "running"
 	TaskCompleted TaskStatus = "completed"
 	TaskFailed    TaskStatus = "failed"
+	TaskSkipped   TaskStatus = "skipped"
 )
 
 type WorkflowRun struct {

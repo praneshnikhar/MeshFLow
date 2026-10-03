@@ -1,0 +1,19 @@
+name: benchmark-linear-3
+description: "3-step linear pipeline for latency benchmarking"
+tasks:
+  - id: step1
+    handler: http://echohandler:9999/step1
+    retry:
+      max_attempts: 1
+  - id: step2
+    handler: http://echohandler:9999/step2
+    depends_on:
+      - step1
+    retry:
+      max_attempts: 1
+  - id: step3
+    handler: http://echohandler:9999/step3
+    depends_on:
+      - step2
+    retry:
+      max_attempts: 1

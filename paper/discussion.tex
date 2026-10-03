@@ -1,0 +1,31 @@
+\section{Discussion and Limitations}
+
+\subsection{The Claim Race Trade-off}
+
+The first-claim-wins mechanism trades absolute correctness (at-most-once execution) for scheduling latency. The race window between two nodes claiming the same task equals the gossip propagation delay (approximately 200 ms) plus the arbitration window (15 ms). Within this window, duplicate claims are theoretically possible.
+
+However, in practice, the arbitration window resolves the overwhelming majority of conflicts. For a race to produce a duplicate execution, both nodes must (a) claim the same task within the same 200 ms gossip cycle, (b) have their claim events arrive at all peers in the same order, and (c) both pass the arbitration check. The probability of this occurring is approximately $(claim\_rate \times gossip\_interval) / num\_nodes$, which for a 3-node mesh with 10 claims/second is approximately 0.67 events per second that enter the race window, with only a fraction resulting in duplicates.
+
+For workloads that cannot tolerate duplicates, we recommend increasing the arbitration window or adding JetStream-based message deduplication (a planned feature). For idempotent workloads (the common case in ETL pipelines), the default 15 ms window provides sufficient protection.
+
+\subsection{Scalability}
+
+The current design scales to approximately 100 nodes before the gossip broadcast overhead becomes significant. At 100 nodes, each event generates 99 reliable UDP transmissions, consuming approximately 500 KB/s of gossip bandwidth at 40 events/sec. For larger deployments, we plan to implement topic-based event routing where only nodes subscribed to specific workflow types receive events.
+
+SWIM itself scales well to thousands of nodes: the per-node probe load is constant ($O(1)$), and the infection-style dissemination reaches all nodes in $O(\log N)$ rounds. The primary bottleneck is the gossip-to-NATS relay, which broadcasts all events to all nodes.
+
+\subsection{Security}
+
+The current prototype does not implement authentication or encryption. In production deployments, the gossip layer should use memberlist's built-in shared-key encryption, and the NATS layer should use TLS with token-based authentication. The HTTP API should be protected with API keys or mutual TLS. These are standard operational concerns, not fundamental design limitations.
+
+\subsection{Future Work}
+
+Several extensions are planned:
+
+\begin{itemize}
+\item \textbf{Cron scheduling}: The YAML schema supports cron triggers, but the scheduler is not yet implemented.
+\item \textbf{Task output passing}: Passing outputs between dependent tasks would enable dataflow-style pipelines.
+\item \textbf{Additional handler types}: gRPC, shell commands, and WebAssembly handlers beyond the current HTTP-only executor.
+\item \textbf{JetStream deduplication}: Using JetStream's built-in message deduplication with the claim token as the dedup key would eliminate the need for the arbitration window.
+\item \textbf{Topic-based routing}: Selective event propagation to reduce gossip bandwidth at scale.
+\end{itemize}

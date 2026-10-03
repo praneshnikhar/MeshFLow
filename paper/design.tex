@@ -1,0 +1,80 @@
+\section{Design}
+
+\subsection{System Architecture}
+
+Each MeshFlow node is a self-contained binary that bundles five layers:
+
+\begin{enumerate}
+\item \textbf{Gossip Layer}: SWIM-based membership protocol for peer discovery and failure detection, implemented via HashiCorp memberlist.
+\item \textbf{Pub/Sub Layer}: Embedded NATS server with JetStream for durable, at-least-once event delivery within the node. Each node runs its own NATS instance; gossip bridges events across nodes.
+\item \textbf{DAG Engine}: Event-driven workflow orchestrator that resolves task dependencies, claims ready tasks via first-claim-wins, and dispatches execution.
+\item \textbf{Persistence Layer}: BoltDB for crash-safe, per-node storage of workflow definitions, run state, and event history.
+\item \textbf{API Layer}: REST API with Server-Sent Events (SSE) for real-time monitoring, plus an embedded single-page dashboard.
+\end{enumerate}
+
+\subsection{SWIM Gossip Membership}
+
+MeshFlow uses the SWIM protocol for peer discovery and failure detection. Each node periodically probes a random subset of peers; failed nodes are detected and removed from the membership list. The gossip configuration is tuned for rapid failure detection:
+
+\begin{itemize}
+\item Probe interval: 1 second
+\item Probe timeout: 500 ms
+\item Suspicion multiplier: 4 (nodes are declared dead after $4 \times 1$s = 4 seconds of failed probes, approximately 2 seconds in practice)
+\item Gossip interval: 200 ms (state disseminated to 3 random peers per round)
+\item Dead node reclamation: 60 seconds (time before a dead node's state is garbage-collected)
+\end{itemize}
+
+This configuration ensures that node failures are detected within approximately 2 seconds, and all surviving nodes learn about the failure within one additional gossip round (200 ms).
+
+\subsection{First-Claim-Wins Task Scheduling}
+
+The cornerstone of MeshFlow's schedulerless design is the first-claim-wins mechanism. When a workflow is triggered, every node in the mesh receives the event. Each node independently:
+
+\begin{enumerate}
+\item Parses the workflow's DAG to identify ready tasks (tasks whose dependencies are satisfied).
+\item Publishes a \texttt{task.claimed} event to its local NATS instance for each ready task.
+\item Waits for the claim event to propagate through gossip to all peers.
+\item Re-verifies that no other node claimed the same task before executing.
+\end{enumerate}
+
+If two nodes claim the same task simultaneously, the event that arrives first at each peer's gossip-to-NATS relay wins. The losing node detects the competing claim during the arbitration window (15 ms by default) and yields.
+
+This mechanism provides at-most-once execution without any leader election or consensus protocol. The arbitration window introduces 15 ms of latency per task claim, but eliminates the possibility of duplicate task execution. In configurations where occasional duplicates are acceptable, the arbitration window can be set to zero, achieving claim latencies under 1 ms.
+
+\subsection{Gossip-to-NATS Event Relay}
+
+A critical design challenge is bridging the UDP-based gossip domain to the TCP-based pub/sub domain. Events published by a node's DAG engine go to its local NATS instance. To reach other nodes, they must cross the gossip boundary.
+
+MeshFlow solves this with an event relay bridge. Each node maintains a \texttt{gossipRelay} goroutine that subscribes to all event types on its local NATS. When an event is received, the relay prefixes it with \texttt{"EVT:"} and broadcasts it via \texttt{memberlist.SendReliable()} to all peers. On the receiving side, each gossip message is decoded, checked against a \texttt{seenEvents} map (keyed by event UUID, bounded to 10,000 entries to limit memory), and re-published to the local NATS if not previously seen.
+
+This relay ensures at-least-once delivery across the mesh. The \texttt{seenEvents} deduplication map prevents infinite event loops (a node receiving its own relayed events). All events are also persisted to JetStream streams with 1-hour retention, providing durability against node crashes.
+
+\subsection{Workflow Definition and DAG Execution}
+
+Workflows are defined as YAML files specifying tasks, their dependencies, handlers, and retry policies:
+
+\begin{lstlisting}[basicstyle=\small\ttfamily, frame=single]
+name: etl-pipeline
+tasks:
+  - id: extract
+    handler: http://worker:8080/extract
+    retry:
+      max_attempts: 3
+      backoff: exponential
+      initial_wait: 1s
+      max_wait: 30s
+  - id: transform
+    handler: http://worker:8080/transform
+    depends_on: [extract]
+  - id: load
+    handler: http://worker:8080/load
+    depends_on: [transform]
+\end{lstlisting}
+
+Workflows are validated at deploy time using a 3-color DFS cycle detection algorithm. Tasks with missing dependencies or circular references are rejected at deploy time. The DAG resolver computes ready tasks as $R = \{t \in T \mid \forall d \in depends\_on(t), d \in completed\}$ after each task completion event, providing $O(T \cdot D)$ resolution time where $T$ is the number of tasks and $D$ is the average dependency count.
+
+Task execution uses a configurable HTTP executor with support for both fixed-delay and exponential backoff. The backoff parameters---initial wait, maximum wait, and type---are specified per task. After all retries are exhausted, the task is marked as failed and re-opened for claiming by other nodes.
+
+\subsection{State Recovery}
+
+On startup, each node loads its workflow definitions and run state from BoltDB. Since all nodes independently persist the same event history, a crashed node can recover its full state without querying peers. Event logs are compacted on startup to retain the most recent 10,000 events, bounding disk usage to approximately 500 KB.

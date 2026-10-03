@@ -1,0 +1,22 @@
+name: benchmark-diamond
+description: "Diamond DAG: start -> (a,b) -> end"
+tasks:
+  - id: start
+    handler: http://echohandler:9999/start
+    retry:
+      max_attempts: 1
+  - id: branch-a
+    handler: http://echohandler:9999/branch-a
+    depends_on: [start]
+    retry:
+      max_attempts: 1
+  - id: branch-b
+    handler: http://echohandler:9999/branch-b
+    depends_on: [start]
+    retry:
+      max_attempts: 1
+  - id: merge
+    handler: http://echohandler:9999/merge
+    depends_on: [branch-a, branch-b]
+    retry:
+      max_attempts: 1

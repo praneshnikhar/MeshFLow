@@ -1,0 +1,57 @@
+name: benchmark-fanout-10
+description: "Fan-out pipeline: 1 entry -> 10 parallel workers"
+tasks:
+  - id: start
+    handler: http://echohandler:9999/start
+    retry:
+      max_attempts: 1
+  - id: worker-0
+    handler: http://echohandler:9999/worker-0
+    depends_on: [start]
+    retry:
+      max_attempts: 1
+  - id: worker-1
+    handler: http://echohandler:9999/worker-1
+    depends_on: [start]
+    retry:
+      max_attempts: 1
+  - id: worker-2
+    handler: http://echohandler:9999/worker-2
+    depends_on: [start]
+    retry:
+      max_attempts: 1
+  - id: worker-3
+    handler: http://echohandler:9999/worker-3
+    depends_on: [start]
+    retry:
+      max_attempts: 1
+  - id: worker-4
+    handler: http://echohandler:9999/worker-4
+    depends_on: [start]
+    retry:
+      max_attempts: 1
+  - id: worker-5
+    handler: http://echohandler:9999/worker-5
+    depends_on: [start]
+    retry:
+      max_attempts: 1
+  - id: worker-6
+    handler: http://echohandler:9999/worker-6
+    depends_on: [start]
+    retry:
+      max_attempts: 1
+  - id: worker-7
+    handler: http://echohandler:9999/worker-7
+    depends_on: [start]
+    retry:
+      max_attempts: 1
+  - id: worker-8
+    handler: http://echohandler:9999/worker-8
+    depends_on: [start]
+    retry:
+      max_attempts: 1
+  - id: worker-9
+    handler: http://echohandler:9999/worker-9
+    depends_on: [start]
+    retry:
+      max_attempts: 1

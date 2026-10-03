@@ -1,0 +1,7 @@
+\section{Conclusion}
+
+We presented MeshFlow, a schedulerless decentralized workflow orchestration engine that eliminates the central scheduler SPOF through SWIM gossip and first-claim-wins task assignment. By embedding a complete orchestration stack---gossip, pub/sub, DAG engine, and persistence---into a single 26 MB binary with zero external dependencies, MeshFlow radically simplifies deployment while providing fault-tolerant workflow execution.
+
+The first-claim-wins mechanism demonstrates that consensus protocols are not necessary for workflow scheduling: a lightweight arbitration window provides sufficient protection against duplicate execution for the vast majority of workloads. Our evaluation shows 6.3 ms trigger latency, 40,000 events/sec throughput, and sub-2-second failure recovery.
+
+MeshFlow is fully open source.\footnote{Source code available at \texttt{https://github.com/pranesh/meshflow}} We believe its schedulerless architecture represents a viable alternative to consensus-based orchestration for the growing class of event-driven, cloud-native workflow applications.

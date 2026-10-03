@@ -1,4 +1,15 @@
 services:
+  echo:
+    build:
+      context: .
+      dockerfile: Dockerfile.echo
+    hostname: echo
+    container_name: meshflow-echo
+    ports:
+      - "19999:9999"
+    networks:
+      - mesh
+
   node1:
     build: .
     hostname: node1
@@ -8,9 +19,11 @@ services:
       MESHFLOW_BIND_ADDR: 0.0.0.0
       MESHFLOW_GOSSIP_PORT: "7947"
       MESHFLOW_PUBSUB_PORT: "4222"
+      MESHFLOW_API_PORT: "8080"
       MESHFLOW_DATA_DIR: /data
       MESHFLOW_SEEDS: "node2:7947,node3:7947"
     ports:
+      - "8081:8080"
       - "14222:4222"
     volumes:
       - node1-data:/data
@@ -26,8 +39,11 @@ services:
       MESHFLOW_BIND_ADDR: 0.0.0.0
       MESHFLOW_GOSSIP_PORT: "7947"
       MESHFLOW_PUBSUB_PORT: "4222"
+      MESHFLOW_API_PORT: "8080"
       MESHFLOW_DATA_DIR: /data
       MESHFLOW_SEEDS: "node1:7947,node3:7947"
+    ports:
+      - "8082:8080"
     volumes:
       - node2-data:/data
     networks:
@@ -42,8 +58,11 @@ services:
       MESHFLOW_BIND_ADDR: 0.0.0.0
       MESHFLOW_GOSSIP_PORT: "7947"
       MESHFLOW_PUBSUB_PORT: "4222"
+      MESHFLOW_API_PORT: "8080"
       MESHFLOW_DATA_DIR: /data
       MESHFLOW_SEEDS: "node1:7947,node2:7947"
+    ports:
+      - "8083:8080"
     volumes:
       - node3-data:/data
     networks:

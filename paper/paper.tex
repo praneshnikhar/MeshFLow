@@ -1,0 +1,38 @@
+\documentclass[sigconf]{acmart}
+
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{arrows,shapes,positioning,fit,backgrounds}
+
+\setcopyright{rightsretained}
+\acmConference[Submitted for review]{}{}{2026}{}
+
+\begin{document}
+
+\title{MeshFlow: Schedulerless Decentralized Workflow Orchestration}
+
+\author{Pranesh Nikhar}
+\affiliation{%
+  \institution{Independent Researcher}
+}
+
+\begin{abstract}
+Modern workflow orchestration systems (Airflow, Temporal, Prefect) rely on centralized schedulers that become single points of failure and bottlenecks at scale. We present MeshFlow, a decentralized workflow orchestration engine where every node is a self-contained scheduler, worker, and message broker. MeshFlow eliminates the central scheduler by embedding NATS JetStream for durable pub/sub and SWIM gossip for peer discovery within each node. Tasks are assigned via a first-claim-wins mechanism over the gossip mesh---no leader election, no consensus protocol, no single point of coordination. Each node ships as a single 26 MB binary with zero external dependencies. We demonstrate that MeshFlow achieves 6.3 ms trigger latency for single-task workflows, 8.9 ms for 10-task linear DAGs, and sustains 40,000 events/second through its embedded pub/sub layer. The system detects node failures in approximately 2 seconds via SWIM and recovers orphaned tasks automatically. We analyze the trade-off between decentralized task claiming and the potential for duplicate claims, and present a deterministic arbitration mechanism with 15 ms overhead that ensures at-most-once execution.
+\end{abstract}
+
+\maketitle
+
+\input{paper/intro}
+\input{paper/background}
+\input{paper/design}
+\input{paper/implementation}
+\input{paper/evaluation}
+\input{paper/related}
+\input{paper/discussion}
+\input{paper/conclusion}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{paper/references}
+
+\end{document}

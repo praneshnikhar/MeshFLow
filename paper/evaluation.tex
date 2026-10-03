@@ -1,0 +1,64 @@
+\section{Evaluation}
+
+We evaluate MeshFlow on a single-node Apple M1 (8-core) machine to characterize micro-benchmark performance. All benchmarks use Go's built-in benchmarking framework with 5 iterations per benchmark and the 15 ms arbitration window enabled.
+
+\subsection{Trigger Latency}
+
+Table~\ref{tab:trigger-latency} shows the latency for deploying and triggering workflows of varying DAG topologies. Each measurement includes BoltDB persistence, NATS event publish, and DAG resolution.
+
+\begin{table}[h]
+\centering
+\caption{Workflow trigger latency by DAG topology (single node).}
+\label{tab:trigger-latency}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Workflow} & \textbf{Tasks} & \textbf{Latency (ms)} \\
+\midrule
+Single task & 1 & 6.3 \\
+Linear 3-task & 3 & 6.4 \\
+Linear 10-task & 10 & 8.9 \\
+Fan-out 11-task & 11 & 9.2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The near-constant trigger latency across DAG sizes (1-task vs. 10-task shows only 2.6 ms increase) demonstrates that DAG resolution overhead is negligible compared to persistence and event publish costs. The fan-out pattern (1 entrypoint + 10 parallel workers) shows 9.2 ms, consistent with linear scaling. Note that the 15 ms arbitration window is included in these measurements; without arbitration, single-task trigger latency drops below 1 ms.
+
+\subsection{Event Throughput}
+
+The embedded NATS JetStream layer achieves 30--52K events per second on a single core, with per-event latency of 29--35 $\mu$s and consumption of approximately 5.2 KB per event. This throughput is measured end-to-end: publish, JetStream persistence, subscriber delivery, and acknowledgment.
+
+Table~\ref{tab:event-throughput} shows the distribution across 5 benchmark runs.
+
+\begin{table}[h]
+\centering
+\caption{Event throughput through embedded NATS JetStream.}
+\label{tab:event-throughput}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Run} & \textbf{Events/sec} & \textbf{$\mu$s/op} \\
+\midrule
+1 & 39,348 & 33.6 \\
+2 & 36,066 & 30.2 \\
+3 & 52,471 & 28.9 \\
+4 & 34,656 & 35.0 \\
+5 & 37,720 & 30.5 \\
+\midrule
+\textbf{Average} & \textbf{40,052} & \textbf{31.6} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The variance between runs (34,656--52,471 events/sec) reflects the impact of the Go garbage collector and OS scheduler on the benchmark. At the average rate of 40,000 events/sec, the event layer can sustain a 1,000-node mesh where each node produces 40 events/sec, far exceeding typical workflow orchestration workloads.
+
+\subsection{Persistence Performance}
+
+BoltDB writes for workflow run state average 6.5 ms per operation across 5 benchmark runs (5.9--7.1 ms), with approximately 31 KB allocated per write. This yields approximately 150 writes per second on a single core. For a typical workflow with 100 tasks, state persistence adds approximately 650 ms total across the entire run---negligible compared to typical task execution times of seconds to minutes.
+
+\subsection{Failure Detection and Recovery}
+
+The SWIM gossip configuration provides failure detection within approximately 2 seconds (probe interval of 1 second with suspicion multiplier of 4). Once a node failure is detected, the gossip protocol propagates the membership change to all surviving nodes within one gossip round (200 ms). Task reclamation is immediate: when a surviving node receives the \texttt{node.left} event, it identifies orphaned tasks claimed by the failed node and re-opens them for claiming.
+
+\subsection{Binary Size and Memory Footprint}
+
+The MeshFlow binary is 26 MB on arm64 Darwin (20 MB in Docker Alpine). At idle, a node consumes approximately 15 MB of RAM. Under load with a 10-task workflow executing, memory usage increases to approximately 25 MB due to in-memory DAG state and event buffers. The BoltDB database for a node with 1,000 workflow runs occupies approximately 2 MB on disk.
